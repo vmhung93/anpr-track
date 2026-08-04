@@ -11,10 +11,10 @@ __pycache__/
 models/*.pt
 
 # Input clips and training data (external/user-supplied, not committed)
-data/videos/*
-!data/videos/.gitkeep
-data/datasets/*
-!data/datasets/.gitkeep
+input/videos/*
+!input/videos/.gitkeep
+input/datasets/*
+!input/datasets/.gitkeep
 
 # Run artifacts
 output/

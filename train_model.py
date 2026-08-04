@@ -9,7 +9,7 @@ def main():
     # 2. Train the model on your custom dataset
     print("Starting training...")
     model.train(
-        data="./data/datasets/vn_license_plate_dataset/data.yaml",  # Path to your YAML file
+        data="./input/datasets/vn_license_plate_dataset/data.yaml",  # Path to your YAML file
         epochs=50,  # Number of training loops (start with 50-100)
         imgsz=416,  # Image size (640 is standard)
         batch=8,  # Batch size (adjust based on your GPU RAM)

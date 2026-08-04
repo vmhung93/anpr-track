@@ -34,7 +34,7 @@ Model paths, target classes, and confidence thresholds live in `config.yaml`. Fo
 ```
 config.yaml           # model paths, detection thresholds, output locations
 models/                # YOLO26 vehicle + plate detector weights
-data/
+input/
   videos/               # input clips
   datasets/              # training data (YOLO-format)
 src/anpr/
@@ -62,4 +62,4 @@ train_model.py         # trains the custom plate-detector model
 uv run python train_model.py
 ```
 
-Trains on `data/datasets/vn_license_plate_dataset/data.yaml`; see that dataset's `README.roboflow.txt` for source/license details.
+Trains on `input/datasets/vn_license_plate_dataset/data.yaml`; see that dataset's `README.roboflow.txt` for source/license details.

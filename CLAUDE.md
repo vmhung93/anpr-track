@@ -46,4 +46,4 @@ Every confirmed plate read saves the exact post-deskew crop to `output/snapshots
 
 ### Training
 
-`train_model.py` fine-tunes YOLO26 (from `yolo26n.pt`) on `data/datasets/vn_license_plate_dataset/data.yaml` (Roboflow export, single class `plate`) to produce `models/license_plate_detector.pt`. Current run config: 50 epochs, imgsz=416, batch=8, CPU.
+`train_model.py` fine-tunes YOLO26 (from `yolo26n.pt`) on `input/datasets/vn_license_plate_dataset/data.yaml` (Roboflow export, single class `plate`) to produce `models/license_plate_detector.pt`. Current run config: 50 epochs, imgsz=416, batch=8, CPU.
