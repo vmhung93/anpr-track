@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vietnamese ANPR MVP — Implementation Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1c1e21;
+    --muted: #5b6270;
+    --border: #e2e5ea;
+    --card: #f7f8fa;
+    --accent: #1a6b4f;
+    --accent-bg: #e7f5ef;
+    --code-bg: #eef0f3;
+    --warn-bg: #fff6e5;
+    --warn-border: #e8c26b;
+    --info-bg: #eaf3ff;
+    --info-border: #7fb0e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --fg: #e6e8eb;
+      --muted: #9aa2ad;
+      --border: #2a2e35;
+      --card: #1b1e23;
+      --accent: #5fd0a6;
+      --accent-bg: #14251f;
+      --code-bg: #20242b;
+      --warn-bg: #2a2210;
+      --warn-border: #7a5c1e;
+      --info-bg: #101d2b;
+      --info-border: #2f5a86;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    max-width: 880px;
+    padding: 2.5rem 1.5rem 5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.2rem; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 2rem; }
+  h2 {
+    font-size: 1.3rem;
+    margin-top: 2.8rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border-radius: 4px;
+  }
+  code { padding: 0.1rem 0.35rem; font-size: 0.88em; }
+  pre {
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+  }
+  pre code { padding: 0; background: none; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--card); }
+  .box {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin: 1rem 0;
+  }
+  .info {
+    border-left: 4px solid var(--info-border);
+    background: var(--info-bg);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+  }
+  .info .label, .warn .label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+  .info .label { color: #3a7fc4; }
+  .warn .label { color: #ad8221; }
+  .warn {
+    border-left: 4px solid var(--warn-border);
+    background: var(--warn-bg);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+  }
+  .goal { color: var(--muted); font-style: italic; margin-top: -0.3rem; }
+  footer {
+    margin-top: 3.5rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .toc { columns: 2; column-gap: 2rem; }
+  .toc a { color: var(--fg); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc li { break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<h1>Vietnamese ANPR MVP — Implementation Plan</h1>
+<p class="subtitle">Vehicle detection + Vietnamese license plate OCR pipeline: architecture, phased build-out, and what's still open. Kept in sync with <code>src/anpr/</code>, <code>config.yaml</code>, and <code>pyproject.toml</code>.</p>
+
+<div class="toc">
+<ul>
+<li><a href="#phase0">Phase 0 — Project Scaffolding</a></li>
+<li><a href="#phase1">Phase 1 — Environment &amp; Dependencies</a></li>
+<li><a href="#phase2">Phase 2 — Model &amp; Dataset Acquisition</a></li>
+<li><a href="#phase3">Phase 3 — Core Pipeline Integration</a></li>
+<li><a href="#phase4">Phase 4 — Persistence &amp; Logging</a></li>
+<li><a href="#phase5">Phase 5 — Robustness Refinements</a></li>
+<li><a href="#phase6">Phase 6 — Hardware Optimization (OpenVINO)</a></li>
+<li><a href="#phase7">Phase 7 — Testing &amp; Validation</a></li>
+<li><a href="#open">Open inputs needed from you</a></li>
+</ul>
+</div>
+
+<h2 id="phase0">Phase 0: Project Scaffolding</h2>
+<p class="goal">Goal: one installable package with one entry point, instead of flat disconnected scripts.</p>
+<pre><code>anpr-track/
+  pyproject.toml
+  config.yaml
+  models/
+    yolo26n.pt              # pre-trained YOLO26, vehicle detection
+    license_plate_detector.pt # custom-trained YOLO26, plate detection
+  data/
+    videos/                 # input clips
+    datasets/
+      vn_license_plate_dataset/
+  src/anpr/
+    __init__.py
+    cli.py              # argparse entry point (--video/--config/--output)
+    pipeline.py          # per-frame detect -> track -> deskew -> OCR loop
+    vehicle_detector.py  # YOLO26 + ByteTrack wrapper
+    plate_detector.py    # secondary YOLO26 on vehicle crops
+    deskew.py             # four-point perspective correction
+    ocr.py                 # PaddleOCR wrapper
+    formatter.py            # raw OCR text -> standard VN plate format
+    track_state.py           # per-vehicle plate cooldown
+    storage.py                # SQLite/CSV logger (stub — see Phase 4)
+  tests/
+  logs/
+  output/
+    snapshots/                # plate crops saved for manual verification
+  .vscode/
+    launch.json                # debugpy config for `anpr.cli`
+</code></pre>
+<ul>
+<li><code>config.yaml</code> holds model paths, target COCO classes, confidence thresholds (vehicle/plate/OCR), and output/log paths — no hardcoded video path in source.</li>
+<li><code>cli.py</code> exposes <code>--video</code> (required), <code>--config</code> (defaults to the repo-root <code>config.yaml</code>), and <code>--output</code>.</li>
+</ul>
+
+<h2 id="phase1">Phase 1: Environment &amp; Dependency Setup</h2>
+<p class="goal">Goal: a reproducible, lightweight Python environment using <code>uv</code>.</p>
+<ul>
+<li><code>pyproject.toml</code> builds <code>src/anpr</code> as an installable package (hatchling + <code>[tool.uv] package = true</code>); <code>uv sync</code> installs it editable with a <code>uv run anpr</code> console script.</li>
+<li><b>Computer vision:</b> <code>opencv-python</code>, <code>numpy</code> (transitive via <code>ultralytics</code>).</li>
+<li><b>Detection/tracking:</b> <code>ultralytics</code> (YOLO26 + ByteTrack).</li>
+<li><b>OCR:</b> <code>paddleocr>=2.7,&lt;3</code> and <code>paddlepaddle>=2.6,&lt;3</code> — pinned below the 3.x line on purpose. PaddleOCR 3.x renamed constructor args (<code>use_angle_cls</code> → <code>use_textline_orientation</code>, dropped <code>show_log</code>) and its default pipeline (doc-orientation + doc-unwarping + detection + recognition) is noticeably heavier than the 2.x path this project's <code>ocr.py</code> is built against. One OCR engine only — no EasyOCR fallback.</li>
+<li><b>Config/CLI:</b> stdlib <code>argparse</code> + <code>PyYAML</code>.</li>
+<li><b>Persistence:</b> stdlib <code>sqlite3</code> (no new dependency) — for Phase 4.</li>
+<li><b>Dev:</b> <code>pytest</code>, to be added when Phase 5's unit tests land.</li>
+<li><b>Hardware acceleration (Intel Core Ultra 7):</b> <code>openvino</code>, to be added for Phase 6.</li>
+</ul>
+<div class="warn">
+<span class="label">System requirement</span>
+<code>paddlepaddle</code> requires the system OpenMP runtime <code>libgomp.so.1</code>. Without it, <code>import paddle</code> fails with <code>ImportError: libgomp.so.1: cannot open shared object file</code>. Install via <code>sudo apt-get install -y libgomp1</code> before running the pipeline on a new machine.
+</div>
+
+<h2 id="phase2">Phase 2: Model &amp; Dataset Acquisition</h2>
+<p class="goal">Goal: detection weights and training data for Vietnamese plates, covering white (personal), yellow (commercial), and blue (government) backgrounds.</p>
+
+<h3>2.1 Vehicle detection model</h3>
+<p><code>models/yolo26n.pt</code> — pre-trained YOLO26, filtered to COCO classes <code>2</code> (car), <code>3</code> (motorcycle), <code>5</code> (bus), <code>7</code> (truck) via <code>config.yaml</code>'s <code>detection.target_classes</code>.</p>
+
+<h3>2.2 License plate detection model</h3>
+<p><code>models/license_plate_detector.pt</code> — custom-trained YOLO26, trained via <code>train_model.py</code> against <code>data/datasets/vn_license_plate_dataset/</code> (a Roboflow "Vietnam license plate" export, CC BY 4.0, single class <code>plate</code>). Currently 50 epochs, <code>imgsz=416</code>, batch 8, CPU.</p>
+<div class="info">
+<span class="label">Where to look for more data</span>
+<ul>
+<li><b>Roboflow Universe</b> — search "Vietnamese license plate"; check each project's license before use beyond personal/research.</li>
+<li><b>Kaggle</b> — search "Vietnamese license plate detection/recognition" for datasets with both detection boxes and OCR ground truth.</li>
+<li><b>GitHub</b> — repos/topics like <code>vietnamese-license-plate</code> or "Vietnamese ALPR YOLO" often bundle or link to a labeled dataset. Verify the license before reuse.</li>
+<li><b>Hand-label a supplement.</b> Public datasets skew heavily toward white personal plates. Capture footage containing commercial/government plates and label a few hundred with Roboflow's annotate tool, CVAT, or LabelImg to fill the yellow/blue gap.</li>
+</ul>
+</div>
+<ul>
+<li><b>Still needed:</b> verify the current dataset's white/yellow/blue balance — not yet checked.</li>
+<li><b>Still needed:</b> stratify train/val/test by plate color so Phase 7 can report per-color recall, not just an aggregate number.</li>
+</ul>
+
+<h3>2.3 OCR engine</h3>
+<p>PaddleOCR's default multilingual detection + recognition models (<code>en</code>) — handles VN plates' alphanumeric character set; no custom OCR training needed.</p>
+
+<h2 id="phase3">Phase 3: Core Pipeline Integration</h2>
+<p class="goal">Goal: one video-processing loop in <code>pipeline.py</code> connecting detection, tracking, deskewing, and OCR.</p>
+<ol>
+<li><b>Detection &amp; tracking (ByteTrack):</b> <code>vehicle_detector.py</code>'s <code>VehicleDetector.track()</code> calls <code>model.track(frame, classes=target_classes, persist=True)</code>, with <code>target_classes</code> sourced from <code>config.yaml</code>.</li>
+<li><b>Plate extraction:</b> crops the vehicle box and runs <code>plate_detector.py</code> on the crop.
+  <div class="warn"><span class="label">Known issue</span><code>pipeline.py</code> takes <code>plate_results[0].boxes.xyxy[0]</code> as "the" plate box. Ultralytics does not guarantee that ordering is confidence-sorted. Should explicitly select <code>argmax(boxes.conf)</code> when more than one plate candidate is returned.</div>
+  </li>
+<li><b>Plate-type &amp; layout classification (not yet implemented):</b> from the plate crop, determine
+  <ul>
+    <li><b>Layout</b> — 1-line vs 2-line, via bounding-box aspect ratio (1-line plates ≈ 4.5:1 width:height; 2-line motorbike plates ≈ 1:1–1.5:1). Feeds the OCR line-sort step instead of relying on however many text regions PaddleOCR happens to return.</li>
+    <li><b>Background color</b> — white / yellow / blue, via an HSV color mask sampled from the plate crop's background pixels. Needed before preprocessing can be color-aware (see step 5).</li>
+  </ul>
+</li>
+<li><b>Deskewing (<code>deskew.py</code>):</b> <code>find_plate_corners_from_crop</code> + <code>four_point_transform</code>, called right after the plate crop is extracted. Falls back to the raw crop when 4 corners aren't found (common on low-contrast crops).</li>
+<li><b>Preprocessing (not yet implemented):</b> plate crops currently go straight from deskew to OCR with no contrast/binarization step. Build this only once step 3's color classification exists: resize (bicubic) → grayscale → bilateral denoise → sharpen → Otsu binarize, with the threshold direction (<code>THRESH_BINARY</code> vs <code>THRESH_BINARY_INV</code>) chosen from the detected plate color. A single fixed threshold direction breaks blue plates (light text on a dark background inverts). Also worth confirming empirically whether binarizing helps at all — PaddleOCR's recognizer is a CNN trained on natural grayscale/color crops, and hard binarization can hurt it rather than help, unlike with classical OCR engines.</li>
+<li><b>OCR &amp; formatting:</b> <code>ocr.py</code>'s <code>vn_plate_parser</code> runs PaddleOCR on the (deskewed) crop, sorts detections top-to-bottom, concatenates, and passes the cleaned text to <code>formatter.py</code>'s <code>vn_plate_formater</code>.
+  <div class="warn"><span class="label">Known issue</span><code>vn_plate_formater</code> slices by string length (<code>if length == 8 → …</code>, <code>elif length == 9 → …</code>) with no character-class check, so an 8- or 9-character OCR misread is silently accepted as a valid plate. Should be replaced with an explicit regex per known VN format (e.g. <code>^\d{2}[A-Z]-?\d{1,2}?\d{3}\.\d{2}$</code> after cleaning), rejecting to "no read" when nothing matches.</div>
+  </li>
+</ol>
+<p>For manual verification, every confirmed plate read saves its exact (post-deskew) crop to <code>output/snapshots/frame{N}_track{id}_{plate_text}.jpg</code> — so the OCR output can be eyeballed against the source image.</p>
+
+<h2 id="phase4">Phase 4: Persistence &amp; Logging</h2>
+<p class="goal">Goal: give "anpr-track" something to track — a structured record that survives after the process exits, not just a console printout.</p>
+<p><code>src/anpr/storage.py</code> is currently an empty stub. Target design:</p>
+<ul>
+<li><b>Storage:</b> SQLite (<code>output/detections.db</code>) via stdlib <code>sqlite3</code>.</li>
+<li><b>Schema (one row per <i>confirmed</i> read, not per frame):</b></li>
+</ul>
+<table>
+<tr><th>column</th><th>type</th><th>notes</th></tr>
+<tr><td><code>id</code></td><td>INTEGER PK</td><td></td></tr>
+<tr><td><code>video_source</code></td><td>TEXT</td><td>input filename</td></tr>
+<tr><td><code>track_id</code></td><td>INTEGER</td><td>ByteTrack ID</td></tr>
+<tr><td><code>vehicle_class</code></td><td>TEXT</td><td>car / motorcycle / bus / truck</td></tr>
+<tr><td><code>plate_text</code></td><td>TEXT</td><td>formatted, e.g. <code>29A1-123.45</code></td></tr>
+<tr><td><code>plate_color</code></td><td>TEXT</td><td>white / yellow / blue</td></tr>
+<tr><td><code>ocr_confidence</code></td><td>REAL</td><td>from PaddleOCR / frame-voting result</td></tr>
+<tr><td><code>snapshot_path</code></td><td>TEXT</td><td>path under <code>output/snapshots/</code></td></tr>
+<tr><td><code>frame_number</code></td><td>INTEGER</td><td>first frame the confirmed read occurred</td></tr>
+<tr><td><code>created_at</code></td><td>TEXT</td><td>wall-clock timestamp</td></tr>
+</table>
+<p><i>Note:</i> snapshot images are already being written (see Phase 3); <code>storage.py</code> just needs to record the path alongside the rest of the row.</p>
+
+<h2 id="phase5">Phase 5: Robustness Refinements</h2>
+<p class="goal">Goal: reduce false/garbage reads before they ever reach persistence.</p>
+<p><code>track_state.py</code> currently implements only a first-successful-read cooldown (<code>has_plate</code> / <code>get</code> / <code>set</code> over a plain dict) — not the voting buffer below.</p>
+<ol>
+<li><b>Frame voting:</b> maintain a short buffer (last 3–5 OCR attempts) per <code>track_id</code>; keep the most frequent formatted-and-validated result rather than the first non-empty one.</li>
+<li><b>Confidence-gated cooldown:</b> only stop re-running OCR on a <code>track_id</code> once the voted result has both (a) hit a minimum vote count and (b) passed the Phase 3 format regex.</li>
+<li><b>Unit tests</b> (<code>tests/</code> is currently empty): <code>formatter.py</code>'s regex validation and <code>track_state.py</code>'s voting logic are pure functions — cheap to cover with <code>pytest</code> once it's added as a dependency.</li>
+</ol>
+
+<h2 id="phase6">Phase 6: Hardware Optimization (Intel Core Ultra 7)</h2>
+<p class="goal">Goal: move from MVP to real-time performance using OpenVINO, sequenced after the pipeline is correctness-verified (Phase 7 gate).</p>
+<ol>
+<li><b>Export YOLO to OpenVINO:</b> convert both YOLO26 models to IR format — <code>yolo export model=yolo26n.pt format=openvino</code> (and the same for <code>license_plate_detector.pt</code>).</li>
+<li><b>NPU/iGPU offloading:</b> point Ultralytics inference at the exported IR directory — <code>YOLO("yolo26n_openvino_model/", task="detect")</code> — and select the Arc iGPU or NPU device explicitly.</li>
+<li><b>PaddleOCR OpenVINO backend:</b> enable OpenVINO execution in PaddleOCR's inference parameters for the recognition phase.</li>
+</ol>
+
+<h2 id="phase7">Phase 7: Testing &amp; Validation</h2>
+<p class="goal">Goal: validate accuracy against real-world conditions with numbers, not just "looks about right."</p>
+<ol>
+<li><b>Test set:</b> 3 distinct video types — daytime clear, nighttime (headlight glare), heavy traffic (occlusion). <code>data/videos/</code> is currently empty; when sourcing, aim to cover all three plate colors in scope.</li>
+<li><b>Success criteria:</b></li>
+</ol>
+<table>
+<tr><th>metric</th><th>target</th></tr>
+<tr><td>Plate detection recall (daytime)</td><td>≥ 90%</td></tr>
+<tr><td>Plate detection recall (night / occluded)</td><td>≥ 70%</td></tr>
+<tr><td>Character-level OCR accuracy (post frame-voting)</td><td>≥ 85%</td></tr>
+<tr><td>End-to-end latency, pre-OpenVINO (CPU)</td><td>baseline measurement only, no target</td></tr>
+<tr><td>End-to-end throughput, post-OpenVINO (Phase 6)</td><td>≥ 15 FPS on the 155H iGPU/NPU</td></tr>
+</table>
+<ol start="3">
+<li><b>Per-plate-color breakdown:</b> report recall/accuracy separately for white, yellow, and blue plates — depends on Phase 2's color-stratified split.</li>
+</ol>
+
+<h2 id="open">Open inputs needed from you</h2>
+<div class="box">
+<ul>
+<li><b>Test videos + dataset color coverage:</b> <code>data/videos/</code> is empty, and the training dataset's white/yellow/blue balance hasn't been checked.</li>
+<li><b><code>libgomp1</code> availability</b> on whatever machine runs this — confirm it's installed (see Phase 1).</li>
+<li><b>Red (military) and new EV plates</b> remain explicitly out of scope per your earlier answer.</li>
+</ul>
+</div>
+
+<footer>Vietnamese ANPR MVP — implementation plan, kept in sync with the codebase in <code>src/anpr/</code>.</footer>
+
+</body>
+</html>

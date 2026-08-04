@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# uv / venv
+.venv/
+
+# Model weights (place locally per README; too large/binary to version)
+models/*.pt
+
+# Input clips and training data (external/user-supplied, not committed)
+data/videos/*
+!data/videos/.gitkeep
+data/datasets/*
+!data/datasets/.gitkeep
+
+# Run artifacts
+output/
+logs/*
+!logs/.gitkeep
+
+# Training run artifacts (ultralytics default)
+runs/
+
+# Editor
+.DS_Store

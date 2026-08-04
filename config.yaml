@@ -1,0 +1,29 @@
+# Model weights
+models:
+  vehicle_detector: models/yolo26n.pt
+  plate_detector: models/license_plate_detector.pt
+
+# Detection thresholds and target COCO classes
+detection:
+  target_classes: [2, 3, 5, 7] # car, motorcycle, bus, truck
+  vehicle_confidence: 0.5
+  plate_confidence: 0.5
+
+# OCR settings
+ocr:
+  confidence_threshold: 0.5
+
+# Where run artifacts go
+output:
+  video_dir: output
+  db_path: output/detections.db
+  snapshot_dir: output/snapshots
+
+# Debug snapshots: every frame, plus vehicle/plate crops whenever a plate is
+# detected. Off by default since it writes one image per frame.
+debug:
+  enabled: false
+  dir: output/debug
+
+logs:
+  dir: logs
