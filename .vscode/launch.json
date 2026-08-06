@@ -12,11 +12,11 @@
       "justMyCode": false,
       "args": [
         "--video",
-        "${workspaceFolder}/data/videos/clip_1.mp4",
+        "${workspaceFolder}/input/videos/clip.mp4",
         "--config",
         "${workspaceFolder}/config.yaml",
         "--output",
-        "${workspaceFolder}/output/output_tracked_1.mp4"
+        "${workspaceFolder}/output/output_tracked.mp4"
       ]
     }
   ]

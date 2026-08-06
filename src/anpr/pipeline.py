@@ -23,9 +23,6 @@ def run(video_path, output_path, config):
     plate_detector = PlateDetector(config["models"]["plate_detector"])
     track_state = TrackState()
 
-    snapshot_dir = config["output"]["snapshot_dir"]
-    os.makedirs(snapshot_dir, exist_ok=True)
-
     debug_config = config.get("debug", {})
     debug_enabled = debug_config.get("enabled", False)
     debug_dir = debug_config.get("dir", "output/debug")
@@ -122,16 +119,6 @@ def run(video_path, output_path, config):
 
                             # Read the text
                             text = vn_plate_parser(plate_crop)
-
-                            safe_text = "".join(
-                                c if c.isalnum() or c in "-." else "_" for c in text
-                            )
-                            snapshot_path = save_snapshot(
-                                plate_crop,
-                                snapshot_dir,
-                                f"frame{frame_idx}_track{track_id}_{safe_text}.jpg",
-                            )
-                            print(f"  saved snapshot -> {snapshot_path}")
 
                             if (
                                 len(text) > 5
