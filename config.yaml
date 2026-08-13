@@ -8,10 +8,21 @@ detection:
   target_classes: [2, 3, 5, 7] # car, motorcycle, bus, truck
   vehicle_confidence: 0.5
   plate_confidence: 0.5
+  # Skip plate detection/OCR on vehicle crops smaller than this on either side
+  # (px) -- too small/far away to read reliably, not worth the compute.
+  min_vehicle_crop_px: 80
 
 # OCR settings
 ocr:
   confidence_threshold: 0.5
+  # Minimum frames between OCR attempts on the same unconfirmed track (after
+  # its first attempt), so a track samples a few different frames instead of
+  # burning compute on every one before it's confirmed.
+  retry_interval_frames: 5
+  # Frame-voting: keep the last N validated reads per track, lock in once one
+  # value gets min_vote_count votes within that window.
+  vote_buffer_size: 5
+  vote_min_count: 2
 
 # Where run artifacts go
 output:

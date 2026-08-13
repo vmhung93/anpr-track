@@ -24,21 +24,18 @@ System dependency: `libgomp.so.1` must be present on the host for `paddlepaddle`
 
 Single per-frame loop in `pipeline.py`, run via `cli.py` (`uv run anpr`), config-driven through `config.yaml` (model paths, target COCO classes, confidence thresholds, output paths — no hardcoded paths in source):
 
-1. **Detect + track vehicles** — `vehicle_detector.py` wraps `YOLO.track(..., persist=True)` (ByteTrack), filtered to COCO classes 2/3/5/7 (car/motorcycle/bus/truck) from `config.yaml`.
-2. **Crop + detect plate** — for each tracked vehicle without a confirmed plate yet, `plate_detector.py` runs a second, custom-trained YOLO26 model (`train_model.py` output) on the vehicle crop.
+1. **Detect + track vehicles** — `vehicle_detector.py` wraps `YOLO.track(..., persist=True, conf=detection.vehicle_confidence)` (ByteTrack), filtered to COCO classes 2/3/5/7 (car/motorcycle/bus/truck) from `config.yaml`.
+2. **Crop + detect plate** — for each tracked vehicle without a confirmed plate yet, `plate_detector.py` runs a second, custom-trained YOLO26 model (`train_model.py` output, `conf=detection.plate_confidence`) on the vehicle crop. Skipped when the crop is smaller than `detection.min_vehicle_crop_px` on either side, or when the track was attempted more recently than `ocr.retry_interval_frames` ago (`track_state.should_attempt`) — avoids burning detection+OCR on every single frame of every unconfirmed track. Among returned plate boxes, `pipeline.py` picks `argmax(boxes.conf)`, not just index 0.
 3. **Deskew** — `deskew.py` finds the plate's 4 corners via contour approximation and applies a perspective transform; falls back to the raw crop if 4 corners aren't found (common on low-contrast crops).
-4. **OCR + format** — `ocr.py`'s `vn_plate_parser` runs PaddleOCR (2.x API — see pinning note below), sorts detected text lines top-to-bottom, concatenates, strips non-alphanumerics, and hands off to `formatter.py`'s `vn_plate_formater`, which reformats by string length (8 or 9 chars) into `XXA-YYY.YY` style.
-5. **Cooldown** — `track_state.py` is a plain dict keyed by `track_id`: once a track has a plate, OCR is skipped for it on subsequent frames (first successful read wins, no voting yet).
-6. **Persistence** — `storage.py` is currently an empty stub (Phase 4: SQLite at `output/detections.db`). Right now results only go to stdout, the annotated output video, and per-plate snapshot crops.
+4. **OCR + format** — `ocr.py`'s `vn_plate_parser` runs PaddleOCR (2.x API — see pinning note below), drops text lines below `ocr.confidence_threshold`, sorts the rest top-to-bottom, concatenates, strips non-alphanumerics, and hands off to `formatter.py`'s `vn_plate_formater`, which validates against a regex per known VN plate layout (`^\d{2}[A-Z]\d{5}$` for 8 chars, `^\d{2}[A-Z]\d{6}$` for 9) and formats to `XXA-YYY.YY` style, rejecting to `""` on any other length or mismatch. Returns `(text, confidence)`, confidence being the mean of the kept lines' OCR scores.
+5. **Frame-voting + cooldown** — `track_state.py` buffers each track's last `ocr.vote_buffer_size` validated reads and locks one in once it gets `ocr.vote_min_count` votes (majority within the window, not first-match). Once locked, OCR is skipped for that track for the rest of the video.
+6. **Persistence** — on lock-in, `pipeline.py` saves the exact post-deskew crop to `output/snapshots/frame{N}_track{id}_{plate_text}.jpg` and writes a row (video source, track id, vehicle class, plate text, OCR confidence, snapshot path, frame number, timestamp) via `storage.py`'s `Storage` class to SQLite at `output/detections.db` (schema in `implementation-plan.html` Phase 4; `plate_color` column exists but is always `NULL` until color classification lands). Results also go to the console and a timestamped file under `logs/` (`pipeline._setup_logging`), plus the annotated output video.
 
-Every confirmed plate read saves the exact post-deskew crop to `output/snapshots/frame{N}_track{id}_{plate_text}.jpg`, so OCR output can be eyeballed against the source image — use these when debugging recognition quality instead of guessing from text output alone.
+Separately, debug snapshots are gated by `config.yaml`'s `debug.enabled` (on by default): when on, `pipeline.py` writes the raw frame, vehicle crop, and plate crop to `output/debug/{frames,vehicles,plates}/frame{N}_track{id}.jpg` on every detection *attempt* (not just confirmed reads) — useful for eyeballing near-miss reads, distinct from the confirmed-only `output/snapshots/`.
 
-### Known correctness gaps (see implementation-plan.html Phase 3/5 for detail)
+### Known correctness gaps (see implementation-plan.html Phase 3 for detail)
 
-- `pipeline.py` takes `plate_results[0].boxes.xyxy[0]` as "the" plate box — Ultralytics does not guarantee confidence ordering, so this should select `argmax(boxes.conf)` when multiple plate candidates exist.
-- `vn_plate_formater` accepts any 8- or 9-character string with no character-class check, so OCR misreads of that length are silently formatted as valid plates. Intended fix is a regex per known VN plate format, rejecting to "no read" on mismatch.
 - No plate-color (white/yellow/blue) or layout (1-line/2-line) classification yet, so there's no color-aware preprocessing and OCR line-sorting relies purely on however many text regions PaddleOCR returns.
-- `track_state.py` keeps the *first* non-empty OCR read per track, not a majority vote — Phase 5 plans a short per-track buffer with frame-voting before locking in a plate.
 
 ### Dependency pinning
 

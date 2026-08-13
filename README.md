@@ -27,7 +27,11 @@ Place model weights in `models/`:
 uv run anpr --video path/to/clip.mp4 --config config.yaml --output output/output_tracked.mp4
 ```
 
-Model paths, target classes, and confidence thresholds live in `config.yaml`. For every plate the pipeline confirms, it saves the exact (deskewed) crop that was OCR'd to `output/snapshots/frame{N}_track{id}_{plate_text}.jpg`, so you can manually check the image against the recognized text.
+Model paths, detection/OCR thresholds, and output locations live in `config.yaml`. For every plate the pipeline confirms (after frame-voting — see below), it saves the exact deskewed crop to `output/snapshots/frame{N}_track{id}_{plate_text}.jpg` and logs a row (video source, track id, vehicle class, plate text, OCR confidence, snapshot path, frame number, timestamp) to a SQLite table at `output/detections.db`. Console output is also mirrored to a timestamped file under `logs/`.
+
+When `debug.enabled` is on (the default), the pipeline separately writes the raw frame, vehicle crop, and plate crop to `output/debug/{frames,vehicles,plates}/frame{N}_track{id}.jpg` on *every* detection attempt (not just confirmed reads) — useful for inspecting near-misses, distinct from the confirmed-only `output/snapshots/`.
+
+A plate isn't locked in on the first OCR read: `track_state.py` keeps the last few validated reads per vehicle and only confirms one once it wins a majority vote (`ocr.vote_min_count` out of `ocr.vote_buffer_size`), to avoid one lucky-but-wrong frame locking in a bad plate.
 
 ## Project layout
 
@@ -45,12 +49,14 @@ src/anpr/
   deskew.py                   # four-point perspective correction
   ocr.py                         # PaddleOCR wrapper
   formatter.py                    # raw OCR text -> standard VN plate format
-  track_state.py                   # per-vehicle plate cooldown
-  storage.py                        # SQLite/CSV logger (Phase 4)
+  track_state.py                   # per-vehicle frame-voting buffer + cooldown
+  snapshot.py                       # writes a crop to disk
+  storage.py                         # SQLite logger for confirmed reads
 tests/
-logs/
+logs/                    # per-run timestamped log files
 output/
-  snapshots/               # plate crops saved for manual verification
+  snapshots/               # deskewed crop per confirmed plate read
+  debug/                   # per-frame/vehicle/plate crops when debug.enabled is true
 .vscode/
   launch.json              # debugpy config for `anpr.cli`
 train_model.py         # trains the custom plate-detector model

@@ -167,12 +167,14 @@
     deskew.py             # four-point perspective correction
     ocr.py                 # PaddleOCR wrapper
     formatter.py            # raw OCR text -> standard VN plate format
-    track_state.py           # per-vehicle plate cooldown
-    storage.py                # SQLite/CSV logger (stub — see Phase 4)
+    track_state.py           # per-vehicle frame-voting buffer + cooldown
+    snapshot.py               # writes a crop to disk
+    storage.py                # SQLite logger for confirmed reads (Phase 4)
   tests/
-  logs/
+  logs/                        # per-run timestamped log files
   output/
-    snapshots/                # plate crops saved for manual verification
+    snapshots/                  # deskewed crop per confirmed plate read
+    debug/                     # frame/vehicle/plate crops when debug.enabled is true
   .vscode/
     launch.json                # debugpy config for `anpr.cli`
 </code></pre>
@@ -226,10 +228,8 @@
 <h2 id="phase3">Phase 3: Core Pipeline Integration</h2>
 <p class="goal">Goal: one video-processing loop in <code>pipeline.py</code> connecting detection, tracking, deskewing, and OCR.</p>
 <ol>
-<li><b>Detection &amp; tracking (ByteTrack):</b> <code>vehicle_detector.py</code>'s <code>VehicleDetector.track()</code> calls <code>model.track(frame, classes=target_classes, persist=True)</code>, with <code>target_classes</code> sourced from <code>config.yaml</code>.</li>
-<li><b>Plate extraction:</b> crops the vehicle box and runs <code>plate_detector.py</code> on the crop.
-  <div class="warn"><span class="label">Known issue</span><code>pipeline.py</code> takes <code>plate_results[0].boxes.xyxy[0]</code> as "the" plate box. Ultralytics does not guarantee that ordering is confidence-sorted. Should explicitly select <code>argmax(boxes.conf)</code> when more than one plate candidate is returned.</div>
-  </li>
+<li><b>Detection &amp; tracking (ByteTrack):</b> <code>vehicle_detector.py</code>'s <code>VehicleDetector.track()</code> calls <code>model.track(frame, classes=target_classes, conf=detection.vehicle_confidence, persist=True)</code>, with both sourced from <code>config.yaml</code>.</li>
+<li><b>Plate extraction:</b> crops the vehicle box and runs <code>plate_detector.py</code> (<code>conf=detection.plate_confidence</code>) on the crop, selecting the box at <code>argmax(boxes.conf)</code> when more than one plate candidate is returned (Ultralytics does not guarantee confidence-sorted ordering). Skipped when the crop is smaller than <code>detection.min_vehicle_crop_px</code> on either side, or when the track was last attempted less than <code>ocr.retry_interval_frames</code> ago — avoids running detection+OCR on every frame of every unconfirmed track.</li>
 <li><b>Plate-type &amp; layout classification (not yet implemented):</b> from the plate crop, determine
   <ul>
     <li><b>Layout</b> — 1-line vs 2-line, via bounding-box aspect ratio (1-line plates ≈ 4.5:1 width:height; 2-line motorbike plates ≈ 1:1–1.5:1). Feeds the OCR line-sort step instead of relying on however many text regions PaddleOCR happens to return.</li>
@@ -238,41 +238,36 @@
 </li>
 <li><b>Deskewing (<code>deskew.py</code>):</b> <code>find_plate_corners_from_crop</code> + <code>four_point_transform</code>, called right after the plate crop is extracted. Falls back to the raw crop when 4 corners aren't found (common on low-contrast crops).</li>
 <li><b>Preprocessing (not yet implemented):</b> plate crops currently go straight from deskew to OCR with no contrast/binarization step. Build this only once step 3's color classification exists: resize (bicubic) → grayscale → bilateral denoise → sharpen → Otsu binarize, with the threshold direction (<code>THRESH_BINARY</code> vs <code>THRESH_BINARY_INV</code>) chosen from the detected plate color. A single fixed threshold direction breaks blue plates (light text on a dark background inverts). Also worth confirming empirically whether binarizing helps at all — PaddleOCR's recognizer is a CNN trained on natural grayscale/color crops, and hard binarization can hurt it rather than help, unlike with classical OCR engines.</li>
-<li><b>OCR &amp; formatting:</b> <code>ocr.py</code>'s <code>vn_plate_parser</code> runs PaddleOCR on the (deskewed) crop, sorts detections top-to-bottom, concatenates, and passes the cleaned text to <code>formatter.py</code>'s <code>vn_plate_formater</code>.
-  <div class="warn"><span class="label">Known issue</span><code>vn_plate_formater</code> slices by string length (<code>if length == 8 → …</code>, <code>elif length == 9 → …</code>) with no character-class check, so an 8- or 9-character OCR misread is silently accepted as a valid plate. Should be replaced with an explicit regex per known VN format (e.g. <code>^\d{2}[A-Z]-?\d{1,2}?\d{3}\.\d{2}$</code> after cleaning), rejecting to "no read" when nothing matches.</div>
-  </li>
+<li><b>OCR &amp; formatting:</b> <code>ocr.py</code>'s <code>vn_plate_parser</code> runs PaddleOCR on the (deskewed) crop, drops text lines below <code>ocr.confidence_threshold</code>, sorts the rest top-to-bottom, concatenates, and passes the cleaned text to <code>formatter.py</code>'s <code>vn_plate_formater</code>, which validates against an explicit regex per known VN format (<code>^\d{2}[A-Z]\d{5}$</code> for 8 chars, <code>^\d{2}[A-Z]\d{6}$</code> for 9 chars) and rejects to "no read" (<code>""</code>) when nothing matches, instead of silently formatting any 8-/9-character OCR misread. Returns <code>(text, confidence)</code>, the latter being the mean OCR score of the lines used.</li>
 </ol>
-<p>For manual verification, every confirmed plate read saves its exact (post-deskew) crop to <code>output/snapshots/frame{N}_track{id}_{plate_text}.jpg</code> — so the OCR output can be eyeballed against the source image.</p>
+<p>Snapshots now serve two distinct purposes. When <code>config.yaml</code>'s <code>debug.enabled</code> is on (the default), the pipeline writes the raw frame, vehicle crop, and plate crop to <code>output/debug/{frames,vehicles,plates}/frame{N}_track{id}.jpg</code> on <i>every</i> detection attempt — useful for inspecting near-misses. Separately, once a track's plate is confirmed (Phase 5's frame-voting), the exact deskewed crop is saved to <code>output/snapshots/frame{N}_track{id}_{plate_text}.jpg</code> for manual verification against the persisted read.</p>
 
 <h2 id="phase4">Phase 4: Persistence &amp; Logging</h2>
 <p class="goal">Goal: give "anpr-track" something to track — a structured record that survives after the process exits, not just a console printout.</p>
-<p><code>src/anpr/storage.py</code> is currently an empty stub. Target design:</p>
-<ul>
-<li><b>Storage:</b> SQLite (<code>output/detections.db</code>) via stdlib <code>sqlite3</code>.</li>
-<li><b>Schema (one row per <i>confirmed</i> read, not per frame):</b></li>
-</ul>
+<p><code>src/anpr/storage.py</code>'s <code>Storage</code> class implements this. Schema (one row per <i>confirmed</i> read, not per frame):</p>
 <table>
 <tr><th>column</th><th>type</th><th>notes</th></tr>
 <tr><td><code>id</code></td><td>INTEGER PK</td><td></td></tr>
 <tr><td><code>video_source</code></td><td>TEXT</td><td>input filename</td></tr>
 <tr><td><code>track_id</code></td><td>INTEGER</td><td>ByteTrack ID</td></tr>
-<tr><td><code>vehicle_class</code></td><td>TEXT</td><td>car / motorcycle / bus / truck</td></tr>
+<tr><td><code>vehicle_class</code></td><td>TEXT</td><td>car / motorcycle / bus / truck (from the vehicle model's own class names)</td></tr>
 <tr><td><code>plate_text</code></td><td>TEXT</td><td>formatted, e.g. <code>29A1-123.45</code></td></tr>
-<tr><td><code>plate_color</code></td><td>TEXT</td><td>white / yellow / blue</td></tr>
-<tr><td><code>ocr_confidence</code></td><td>REAL</td><td>from PaddleOCR / frame-voting result</td></tr>
+<tr><td><code>plate_color</code></td><td>TEXT</td><td>white / yellow / blue — column exists but always <code>NULL</code> until color classification (Phase 3) lands</td></tr>
+<tr><td><code>ocr_confidence</code></td><td>REAL</td><td>mean OCR score of the winning frame-voting result's lines</td></tr>
 <tr><td><code>snapshot_path</code></td><td>TEXT</td><td>path under <code>output/snapshots/</code></td></tr>
-<tr><td><code>frame_number</code></td><td>INTEGER</td><td>first frame the confirmed read occurred</td></tr>
-<tr><td><code>created_at</code></td><td>TEXT</td><td>wall-clock timestamp</td></tr>
+<tr><td><code>frame_number</code></td><td>INTEGER</td><td>frame the vote crossed <code>ocr.vote_min_count</code> and got locked in</td></tr>
+<tr><td><code>created_at</code></td><td>TEXT</td><td>wall-clock timestamp (UTC ISO 8601)</td></tr>
 </table>
-<p><i>Note:</i> snapshot images are already being written (see Phase 3); <code>storage.py</code> just needs to record the path alongside the rest of the row.</p>
+<p><code>pipeline.py</code> calls <code>storage.insert_detection(...)</code> and saves the confirmed-read snapshot in the same step, right after <code>track_state.add_vote()</code> reports a track just got locked in. Console output is also mirrored to a timestamped file under <code>logs/</code> via <code>pipeline._setup_logging</code>, using the previously-unused <code>logs.dir</code> config key.</p>
 
 <h2 id="phase5">Phase 5: Robustness Refinements</h2>
 <p class="goal">Goal: reduce false/garbage reads before they ever reach persistence.</p>
-<p><code>track_state.py</code> currently implements only a first-successful-read cooldown (<code>has_plate</code> / <code>get</code> / <code>set</code> over a plain dict) — not the voting buffer below.</p>
+<p><code>track_state.py</code> now implements a frame-voting buffer instead of first-successful-read:</p>
 <ol>
-<li><b>Frame voting:</b> maintain a short buffer (last 3–5 OCR attempts) per <code>track_id</code>; keep the most frequent formatted-and-validated result rather than the first non-empty one.</li>
-<li><b>Confidence-gated cooldown:</b> only stop re-running OCR on a <code>track_id</code> once the voted result has both (a) hit a minimum vote count and (b) passed the Phase 3 format regex.</li>
-<li><b>Unit tests</b> (<code>tests/</code> is currently empty): <code>formatter.py</code>'s regex validation and <code>track_state.py</code>'s voting logic are pure functions — cheap to cover with <code>pytest</code> once it's added as a dependency.</li>
+<li><b>Frame voting:</b> <code>TrackState.add_vote()</code> keeps the last <code>ocr.vote_buffer_size</code> validated (regex-passed) reads per <code>track_id</code> and locks in the most frequent one once it reaches <code>ocr.vote_min_count</code> votes, rather than trusting the first non-empty read.</li>
+<li><b>Confidence-gated cooldown:</b> a plate can only lock in once it has both (a) hit the minimum vote count and (b) passed the Phase 3 format regex (enforced upstream — <code>formatter.py</code> rejects to <code>""</code> before a read is ever eligible to vote). Once locked, <code>track_state.should_attempt()</code> stops OCR from re-running on that track.</li>
+<li><b>Attempt throttling:</b> beyond voting, <code>TrackState.should_attempt()</code> also rate-limits how often an unconfirmed track is retried (<code>ocr.retry_interval_frames</code>), and <code>pipeline.py</code> skips crops smaller than <code>detection.min_vehicle_crop_px</code> — cuts wasted detection+OCR calls on frames unlikely to read cleanly.</li>
+<li><b>Unit tests</b> (<code>tests/</code> is currently empty): <code>formatter.py</code>'s regex validation and <code>track_state.py</code>'s voting logic are pure functions — cheap to cover with <code>pytest</code> once it's added as a dependency. Still open.</li>
 </ol>
 
 <h2 id="phase6">Phase 6: Hardware Optimization (Intel Core Ultra 7)</h2>
@@ -286,7 +281,7 @@
 <h2 id="phase7">Phase 7: Testing &amp; Validation</h2>
 <p class="goal">Goal: validate accuracy against real-world conditions with numbers, not just "looks about right."</p>
 <ol>
-<li><b>Test set:</b> 3 distinct video types — daytime clear, nighttime (headlight glare), heavy traffic (occlusion). <code>input/videos/</code> is currently empty; when sourcing, aim to cover all three plate colors in scope.</li>
+<li><b>Test set:</b> 3 distinct video types — daytime clear, nighttime (headlight glare), heavy traffic (occlusion). <code>input/videos/</code> currently holds <code>clip_1.mp4</code>–<code>clip_3.mp4</code> (untriaged against these 3 categories, and plate-color coverage not yet checked); no formal recall/accuracy run against the Phase 7 targets below has been done yet.</li>
 <li><b>Success criteria:</b></li>
 </ol>
 <table>
@@ -304,7 +299,7 @@
 <h2 id="open">Open inputs needed from you</h2>
 <div class="box">
 <ul>
-<li><b>Test videos + dataset color coverage:</b> <code>input/videos/</code> is empty, and the training dataset's white/yellow/blue balance hasn't been checked.</li>
+<li><b>Dataset color coverage:</b> the training dataset's white/yellow/blue balance hasn't been checked, and the 3 clips already in <code>input/videos/</code> haven't been triaged against Phase 7's daytime/night/occlusion categories or run through a formal recall/accuracy pass.</li>
 <li><b><code>libgomp1</code> availability</b> on whatever machine runs this — confirm it's installed (see Phase 1).</li>
 <li><b>Red (military) and new EV plates</b> remain explicitly out of scope per your earlier answer.</li>
 </ul>
